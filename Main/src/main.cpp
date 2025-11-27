@@ -3,36 +3,32 @@
 #include <windows.h>
 #include "myLib/thread.h"
 #include "myLib/inputUtils.h"
+#include "myLib/event.h"
 
-struct Events
-{
-	HANDLE hBlockEvent = NULL;
-	HANDLE hContinueEvent = NULL;
-	HANDLE hFinishEvent = NULL;
-};
 
-struct param
+struct ThreadInfo
 {
 	int index;
-	Events e;
+	bool finished = false;
+	myLib::Event BlockEvent, ContinueEvent, FinishEvent;
 };
 
 int* shared_array;
 int array_size;
 CRITICAL_SECTION shared_cs;
-HANDLE hStartEvent = NULL;
+myLib::Event StartEvent;
 
+const int SLEEPTIME = 5;
 
 DWORD WINAPI marker(LPVOID lpParam)
 {
-	param* p = static_cast<param*>(lpParam);
+	ThreadInfo* p = static_cast<ThreadInfo*>(lpParam);
 
 	srand(p->index);
 
-	WaitForSingleObject(hStartEvent, INFINITE);
+	StartEvent.wait(INFINITE);
 
-	srand(p->index);
-
+	bool exitNow = false;
 	while (true)
 	{
 		int index = rand() % array_size;
@@ -40,11 +36,11 @@ DWORD WINAPI marker(LPVOID lpParam)
 		if (shared_array[index] == 0)
 		{
 			LeaveCriticalSection(&shared_cs);
-			Sleep(5);
+			Sleep(SLEEPTIME);
 			EnterCriticalSection(&shared_cs);
 			shared_array[index] = p->index;
 			LeaveCriticalSection(&shared_cs);
-			Sleep(5);
+			Sleep(SLEEPTIME);
 			continue;
 		}
 
@@ -59,8 +55,8 @@ DWORD WINAPI marker(LPVOID lpParam)
 		LeaveCriticalSection(&shared_cs);
 
 		std::cout << "Index of thread: " << p->index << "\nNumber of marked elements: " << count << "\nIndex of element blocked: " << index << std::endl;
-		SetEvent(p->e.hBlockEvent);
-		HANDLE events[2] = { p->e.hContinueEvent, p->e.hFinishEvent };
+		p->BlockEvent.set();
+		HANDLE events[2] = { p->ContinueEvent.native_handle(), p->FinishEvent.native_handle() };
 		DWORD res = WaitForMultipleObjects(2, events, FALSE, INFINITE);
 
 		if (res == WAIT_OBJECT_0 + 1)
@@ -71,18 +67,17 @@ DWORD WINAPI marker(LPVOID lpParam)
 				if (shared_array[i] == p->index)
 				{
 					shared_array[i] = 0;
-				}									
-			}				
+				}
+			}
 			LeaveCriticalSection(&shared_cs);
 			break;
 		}
 		else
 		{
-			ResetEvent(p->e.hBlockEvent);
-			ResetEvent(p->e.hContinueEvent);
+			p->BlockEvent.reset();
+			p->ContinueEvent.reset();
 		}
 	}
-
 	return 0;
 }
 
@@ -110,31 +105,26 @@ int main ()
 		throw std::runtime_error("Invalid number of marker! [1, 1000].");
 	}
 
+	std::vector<ThreadInfo> threadInfos;
+	threadInfos.reserve(marker_num);
+
 	std::vector<myLib::Thread> threads;
-	threads.reserve(marker_num);
 
 	InitializeCriticalSection(&shared_cs);
 
-	std::vector<param> params(marker_num);
-
-
 	for (size_t i = 0; i < marker_num; i++)
 	{
-		params[i].e.hBlockEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-		params[i].e.hFinishEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-		params[i].e.hContinueEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+		threadInfos[i].BlockEvent = myLib::Event(false, false);
+		threadInfos[i].ContinueEvent = myLib::Event(false, false);
+		threadInfos[i].FinishEvent = myLib::Event(false, false);
 
-		params[i].index = i;
+		threadInfos[i].index = i;
 
-		if (!params[i].e.hBlockEvent || !params[i].e.hContinueEvent || !params[i].e.hFinishEvent)
-		{
-			throw std::runtime_error("Failed to create event!");	
-		}
-
-		threads.push_back(myLib::Thread(marker, &params[i]));
+		myLib::Thread thread(marker, &threadInfos[i]);
+		threads.push_back(thread);
 	}
 
-	SetEvent(hStartEvent);
+	StartEvent.set();
 
 	int n = marker_num;
 	while (n > 0)
@@ -142,10 +132,9 @@ int main ()
 		std::vector<HANDLE> hToWait;
 		for (size_t i = 0; i < marker_num; i++)
 		{
-			DWORD w = WaitForSingleObject(params[i].e.hFinishEvent, 0);
-			if (w == WAIT_TIMEOUT)
+			if (!threadInfos[i].finished)
 			{
-				hToWait.push_back(params[i].e.hFinishEvent);
+				hToWait.push_back(threadInfos[i].BlockEvent.native_handle());
 			}
 		}
 
@@ -160,7 +149,49 @@ int main ()
 		std::cout << std::endl;
 		LeaveCriticalSection(&shared_cs);
 
-		int MarkerToFinish
+		int MarkerToFinish;
+		std::cout << "Enter marker to finish: ";
+		while (true)
+		{
+			inputValue(MarkerToFinish);
+			if (MarkerToFinish <= 0 || MarkerToFinish > n || threadInfos[MarkerToFinish].finished)
+			{
+				std::cout << "Invalid index, try again." << std::endl;
+				continue;
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		threadInfos[MarkerToFinish].FinishEvent.set();
+		threads[MarkerToFinish].join();
+		threadInfos[MarkerToFinish].finished = true;
+		n--;
+
+		EnterCriticalSection(&shared_cs);
+		std::cout << "Array: ";
+		for (size_t i = 0; i < array_size; i++)
+		{
+			std::cout << shared_array[i] << ' ';
+		}
+		std::cout << std::endl;
+		LeaveCriticalSection(&shared_cs);
+
+		for (size_t i = 0; i < marker_num; i++)
+		{
+			if (!threadInfos[i].finished)
+			{
+				threadInfos[i].ContinueEvent.set();
+			}
+		}
 	}
+	DeleteCriticalSection(&shared_cs);
+
+	delete[] shared_array;
+
+	std::cout << "All markers finished. Exiting main." << std::endl;
+	return 0;
 
 }
