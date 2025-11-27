@@ -1,11 +1,11 @@
 #include <iostream>
+#include <vector>
 #include <windows.h>
 #include "myLib/thread.h"
 #include "myLib/inputUtils.h"
 
 struct Events
 {
-	HANDLE hStartEvent = NULL;
 	HANDLE hBlockEvent = NULL;
 	HANDLE hContinueEvent = NULL;
 	HANDLE hFinishEvent = NULL;
@@ -14,21 +14,22 @@ struct Events
 struct param
 {
 	int index;
+	Events e;
 };
 
 int* shared_array;
 int array_size;
 CRITICAL_SECTION shared_cs;
+HANDLE hStartEvent = NULL;
 
 
 DWORD WINAPI marker(LPVOID lpParam)
 {
 	param* p = static_cast<param*>(lpParam);
 
-	Events e;
 	srand(p->index);
 
-	WaitForSingleObject(e.hStartEvent, INFINITE);
+	WaitForSingleObject(hStartEvent, INFINITE);
 
 	srand(p->index);
 
@@ -58,8 +59,8 @@ DWORD WINAPI marker(LPVOID lpParam)
 		LeaveCriticalSection(&shared_cs);
 
 		std::cout << "Index of thread: " << p->index << "\nNumber of marked elements: " << count << "\nIndex of element blocked: " << index << std::endl;
-		SetEvent(e.hBlockEvent);
-		HANDLE events[2] = { e.hContinueEvent, e.hFinishEvent };
+		SetEvent(p->e.hBlockEvent);
+		HANDLE events[2] = { p->e.hContinueEvent, p->e.hFinishEvent };
 		DWORD res = WaitForMultipleObjects(2, events, FALSE, INFINITE);
 
 		if (res == WAIT_OBJECT_0 + 1)
@@ -77,8 +78,8 @@ DWORD WINAPI marker(LPVOID lpParam)
 		}
 		else
 		{
-			ResetEvent(e.hBlockEvent);
-			ResetEvent(e.hContinueEvent);
+			ResetEvent(p->e.hBlockEvent);
+			ResetEvent(p->e.hContinueEvent);
 		}
 	}
 
@@ -90,6 +91,76 @@ int main ()
 	std::cout << "Enter array size: ";
 	inputValue(array_size);
 
-	if (g_size <= 0)
+	if (array_size <= 0)
+	{
 		throw std::runtime_error("Invalid array size.");
+	}
+
+	shared_array = new int[array_size];
+	for (int i = 0; i < array_size; i++)
+	{
+		shared_array[i] = 0;
+	}
+
+	int marker_num;
+	inputValue(marker_num);
+
+	if (marker_num <= 0 || marker_num > 1000)
+	{
+		throw std::runtime_error("Invalid number of marker! [1, 1000].");
+	}
+
+	std::vector<myLib::Thread> threads;
+	threads.reserve(marker_num);
+
+	InitializeCriticalSection(&shared_cs);
+
+	std::vector<param> params(marker_num);
+
+
+	for (size_t i = 0; i < marker_num; i++)
+	{
+		params[i].e.hBlockEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+		params[i].e.hFinishEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+		params[i].e.hContinueEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+
+		params[i].index = i;
+
+		if (!params[i].e.hBlockEvent || !params[i].e.hContinueEvent || !params[i].e.hFinishEvent)
+		{
+			throw std::runtime_error("Failed to create event!");	
+		}
+
+		threads.push_back(myLib::Thread(marker, &params[i]));
+	}
+
+	SetEvent(hStartEvent);
+
+	int n = marker_num;
+	while (n > 0)
+	{
+		std::vector<HANDLE> hToWait;
+		for (size_t i = 0; i < marker_num; i++)
+		{
+			DWORD w = WaitForSingleObject(params[i].e.hFinishEvent, 0);
+			if (w == WAIT_TIMEOUT)
+			{
+				hToWait.push_back(params[i].e.hFinishEvent);
+			}
+		}
+
+		WaitForMultipleObjects(hToWait.size(), hToWait.data(), true, INFINITE);
+
+		EnterCriticalSection(&shared_cs);
+		std::cout << "Array: ";
+		for (size_t i = 0; i < array_size; i++)
+		{
+			std::cout << shared_array[i] << ' ';
+		}
+		std::cout << std::endl;
+		LeaveCriticalSection(&shared_cs);
+
+		int MarkerToFinish
+	}
+
 }
