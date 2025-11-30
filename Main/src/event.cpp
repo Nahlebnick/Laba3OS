@@ -27,10 +27,10 @@ void myLib::Event::wait(DWORD wait)
 		DWORD res = WaitForSingleObject(hEvent, wait);
 		switch (res)
 		{
-		case WAIT_OBJECT_0: break;
-		case WAIT_TIMEOUT: throw std::runtime_error("Waiting time expired!"); break;
-		case WAIT_FAILED: throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "WaitForSingleObject failed"); break;
-		default: throw std::runtime_error("Unexpected result from WaitForSingleObject!"); break;
+			case WAIT_OBJECT_0: break;
+			case WAIT_TIMEOUT: throw std::runtime_error("Waiting time expired!"); break;
+			case WAIT_FAILED: throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "WaitForSingleObject failed"); break;
+			default: throw std::runtime_error("Unexpected result from WaitForSingleObject!"); break;
 		}
 	}
 }

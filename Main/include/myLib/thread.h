@@ -20,7 +20,7 @@ public:
 	Thread& operator=(const Thread&) = delete;
 
 	Thread(Thread&& other) = default;
-	~Thread() { close(); } noexcept;
+	~Thread() noexcept { close(); }
 	
 	void join(DWORD wait=INFINITE);
 

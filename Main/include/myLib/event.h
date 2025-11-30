@@ -20,6 +20,7 @@ namespace myLib
 		void reset();
 
 		void wait(DWORD wait);
+
 		HANDLE native_handle() const noexcept { return hEvent; }
 	};
 }
