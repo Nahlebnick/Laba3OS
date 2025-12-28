@@ -1,5 +1,5 @@
-#ifndef PROCESS_H
-#define PROCESS_H
+#ifndef THREAD_H
+#define THREAD_H
 
 #include <iostream>
 #include <functional>
@@ -32,4 +32,4 @@ private:
 };
 
 }
-#endif // PROCESS_H
+#endif // THREAD_H
